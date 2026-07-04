@@ -5,10 +5,10 @@ import Switch from "@/components/ui/Switch.vue";
 import HomeMetricsCard from "@/components/HomeMetricsCard.vue";
 import { useMessage } from "@/composables/useMessage";
 import { showModal } from "@/composables/useModal";
+import { localized } from "@/i18n/runtime";
 import { getAdRuntime } from "@/services/clientApi";
 import {
   appState,
-  appViewState,
   openConfigWindow,
   openModelConfigWindow,
   saveRoutingMode,
@@ -27,6 +27,27 @@ const OPEN_AD_EVENT = "cursor:open-ad";
 
 const adRuntime = ref(null);
 let unsubscribeAdUpdated = null;
+
+const serviceStatusText = computed(() => {
+  if (appState.proxyRunning && appState.backendRunning) {
+    return String(localized("86df7ec743047234", "Service running"));
+  }
+  if (appState.backendRunning) {
+    return String(localized("65cc5fd2e6ce6e75", "Backend started, proxy not started"));
+  }
+  return String(localized("26a3855aed1d8d17", "Service not running"));
+});
+const serviceStatusClass = computed(() => (appState.serviceRunning ? "text-[#22c55e]" : "text-[#f59e0b]"));
+const serviceButtonText = computed(() => {
+  if (appState.serviceBusy) {
+    return appState.serviceRunning
+      ? String(localized("5d1687a4a41883fd", "Stopping..."))
+      : String(localized("ca00a39fcea70dc6", "Starting..."));
+  }
+  return appState.serviceRunning
+    ? String(localized("f474a4108aba4c4c", "Stop Service"))
+    : String(localized("18b7312022cd1840", "Start Service"));
+});
 
 function asString(value) {
   if (typeof value === "string") {
@@ -86,14 +107,14 @@ function handleOpenHomeAd(slotId) {
 async function showActionError(title, error) {
   await showModal({
     title,
-    content: String(error || "服务错误").trim() || "服务错误",
+    content: String(error || localized("6ae23d6d7cb18592", "Service error")).trim() || String(localized("6ae23d6d7cb18592", "Service error")),
   });
 }
 
 async function handleToggleService() {
   const result = await toggleService();
   if (!result.ok) {
-    await showActionError("服务操作失败", result.error);
+    await showActionError(String(localized("7e9e334aeb0bdc07", "Service operation failed")), result.error);
   }
 }
 
@@ -103,7 +124,7 @@ async function handleRefreshState() {
     syncHomeMetrics(),
   ]);
   if (serviceStateResult.status === "rejected") {
-    await showActionError("刷新失败", toUserError(serviceStateResult.reason));
+    await showActionError(String(localized("6106f0a12583a334", "Refresh failed")), toUserError(serviceStateResult.reason));
   }
 }
 
@@ -115,7 +136,7 @@ async function handleOpenConfig() {
   try {
     await openConfigWindow();
   } catch (error) {
-    await showActionError("打开失败", toUserError(error));
+    await showActionError(String(localized("24343a2096988d42", "Failed to open")), toUserError(error));
   }
 }
 
@@ -123,17 +144,21 @@ async function handleOpenModelConfig() {
   try {
     await openModelConfigWindow();
   } catch (error) {
-    await showActionError("打开失败", toUserError(error));
+    await showActionError(String(localized("24343a2096988d42", "Failed to open")), toUserError(error));
   }
 }
 
 async function handleDirectModeChange(enabled) {
   const result = await saveRoutingMode(enabled ? "upstream" : "local");
   if (!result.ok) {
-    await showActionError("切换失败", result.error);
+    await showActionError(String(localized("d08fd4224abcd69d", "Switch failed")), result.error);
     return;
   }
-  message.success(enabled ? "已切换到直连 Cursor 模式" : "已切换到本地服务模式");
+  message.success(
+    enabled
+      ? String(localized("9c38b6e9bf94abec", "Switched to Direct Cursor Mode"))
+      : String(localized("b42049dcf8a05ef7", "Switched to Local Service Mode")),
+  );
 }
 
 onMounted(() => {
@@ -163,15 +188,15 @@ onBeforeUnmount(() => {
       <div class="flex flex-col gap-4">
         <div class="flex items-start justify-between gap-4">
           <div class="flex flex-col gap-1">
-            <div class="text-sm" :class="appViewState.serviceStatusClass">
-              {{ appViewState.serviceStatusText }}
+            <div class="text-sm" :class="serviceStatusClass">
+              {{ serviceStatusText }}
             </div>
           </div>
           <div class="center-row gap-2">
             <Button variant="primary" :disabled="appState.serviceBusy" @click="handleToggleService">
               <span class="icon-[mdi--pause] text-[16px]" v-if="appState.serviceRunning"></span>
               <span class="icon-[mdi--play] text-[16px]" v-else></span>
-              <span> {{ appViewState.serviceButtonText }}</span>
+              <span> {{ serviceButtonText }}</span>
             </Button>
           </div>
         </div>
@@ -182,10 +207,10 @@ onBeforeUnmount(() => {
         </div>
 
         <Switch
-          label="直连模式"
-          description="开启后，Cursor将直接接通官方，请勿开启"
-          enabled-text="当前为直连模式"
-          disabled-text="当前为本地服务模式"
+          :label="String($ls('699fe7ade5407687', 'Direct Mode'))"
+          :description="String($ls('ce46f23cea3bf3c5', 'When enabled, Cursor connects directly to the official service. Do not enable this.'))"
+          :enabled-text="String($ls('a55a88237df85d98', 'Currently in Direct Mode'))"
+          :disabled-text="String($ls('8c0d84831a3c3d5b', 'Currently in Local Service Mode'))"
           :enabled="directModeEnabled"
           :busy="appState.configSaving"
           :disabled="appState.configSaving"
@@ -197,12 +222,12 @@ onBeforeUnmount(() => {
     <Card>
       <div class="flex items-center justify-between gap-4">
         <div>
-          <h2 class="text-base font-medium text-white">本地配置</h2>
-          <div class="text-sm text-[#a3a3a3]">打开设置目录，或单独管理模型配置</div>
+          <h2 class="text-base font-medium text-white">{{ $ls('e406825e0a72d2c2', 'Local Settings') }}</h2>
+          <div class="text-sm text-[#a3a3a3]">{{ $ls('ad79540418be700a', 'Open the settings folder, or manage model settings separately') }}</div>
         </div>
         <div class="center-row gap-2">
-          <Button variant="default" @click="handleOpenConfig">设置文件夹</Button>
-          <Button variant="primary" @click="handleOpenModelConfig">模型配置</Button>
+          <Button variant="default" @click="handleOpenConfig">{{ $ls('c69f5bce63b9f14c', 'Settings Folder') }}</Button>
+          <Button variant="primary" @click="handleOpenModelConfig">{{ $ls('8cbcf741e727dbf7', 'Model Settings') }}</Button>
         </div>
       </div>
     </Card>
