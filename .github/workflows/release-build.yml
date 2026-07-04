@@ -27,6 +27,7 @@ env:
   NODE_VERSION: "22"
   TASK_VERSION: "3.x"
   WAILS3_VERSION: "v3.0.0-alpha.74"
+  PROTOC_VERSION: "25.3"
   PROTOC_GEN_GO_VERSION: "v1.36.11"
   PROTOC_GEN_CONNECT_GO_VERSION: "v1.19.1"
 
@@ -87,13 +88,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
+            curl \
             pkg-config \
-            protobuf-compiler \
+            unzip \
             zip \
             libgtk-3-dev \
             libwebkit2gtk-4.1-dev \
             libglib2.0-dev \
             libayatana-appindicator3-dev
+
+      - name: Install modern protoc
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/protoc.zip "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
+          mkdir -p "$HOME/.local"
+          unzip -o /tmp/protoc.zip -d "$HOME/.local"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+          protoc --version
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -126,6 +138,9 @@ jobs:
 
       - name: Install Wails v3 CLI
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS3_VERSION }}
+
+      - name: Verify proto generation
+        run: task common:generate:proto
 
       - name: Build Linux release assets
         run: task release:prepare:linux SCAN=false
@@ -186,6 +201,9 @@ jobs:
         uses: arduino/setup-task@v2
         with:
           version: ${{ env.TASK_VERSION }}
+
+      - name: Verify proto generation
+        run: task common:generate:proto
 
       - name: Install Wails v3 CLI
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS3_VERSION }}
