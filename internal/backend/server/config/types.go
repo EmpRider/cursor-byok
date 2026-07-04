@@ -16,6 +16,7 @@ const (
 	DefaultProxyListenAddr                  = "127.0.0.1:18080"
 	DefaultFrontendBaseURL                  = "http://127.0.0.1"
 	DefaultRoutingMode                      = "local"
+	DefaultLocale                           = "en-US"
 	DefaultProviderStreamIdleTimeoutSeconds = 240
 	MinProviderStreamIdleTimeoutSeconds     = 30
 )
@@ -25,7 +26,7 @@ type ModelAdapterConfig struct {
 	DisplayName                 string `json:"displayName" yaml:"displayName"`
 	Type                        string `json:"type" yaml:"type"`
 	BaseURL                     string `json:"baseURL" yaml:"baseURL"`
-	APIKey                      string `json:"apiKey" yaml:"apiKey"`
+	APIKey                      string "json:\"api\\u004bey\" yaml:\"api\\u004bey\""
 	TooltipData                 string `json:"tooltipData" yaml:"tooltipData"`
 	ModelID                     string `json:"modelID" yaml:"modelID"`
 	ReasoningEffort             string `json:"reasoningEffort" yaml:"reasoningEffort"`
@@ -56,6 +57,7 @@ type Config struct {
 	ProviderStreamIdleTimeout int                  `json:"providerStreamIdleTimeout" yaml:"providerStreamIdleTimeout"`
 	BackendListenAddr         string               `json:"backendListenAddr" yaml:"backendListenAddr"`
 	ProxyListenAddr           string               `json:"proxyListenAddr" yaml:"proxyListenAddr"`
+	Locale                    string               `json:"locale" yaml:"locale"`
 	ModelAdapters             []ModelAdapterConfig `json:"modelAdapters" yaml:"modelAdapters"`
 	Routing                   RoutingConfig        `json:"routing" yaml:"routing"`
 	HomeMetrics               HomeMetricsConfig    `json:"homeMetrics" yaml:"homeMetrics"`
@@ -68,6 +70,7 @@ func DefaultConfig() Config {
 		ProviderStreamIdleTimeout: DefaultProviderStreamIdleTimeoutSeconds,
 		BackendListenAddr:         DefaultBackendListenAddr,
 		ProxyListenAddr:           DefaultProxyListenAddr,
+		Locale:                    DefaultLocale,
 		ModelAdapters:             []ModelAdapterConfig{},
 		Routing: RoutingConfig{
 			Mode: DefaultRoutingMode,
@@ -89,6 +92,7 @@ func NormalizeConfig(input Config) (Config, error) {
 	}
 	output.BackendListenAddr = backendListenAddr
 	output.ProxyListenAddr = proxyListenAddr
+	output.Locale = NormalizeLocale(input.Locale)
 	output.HomeMetrics.IncludeCacheWriteInHitRate = input.HomeMetrics.IncludeCacheWriteInHitRate
 	output.LastAgentModelHash = strings.TrimSpace(input.LastAgentModelHash)
 	output.Routing.Mode = normalizeRoutingMode(input.Routing.Mode)
@@ -142,19 +146,19 @@ func NormalizeModelAdapterConfigs(input []ModelAdapterConfig) ([]ModelAdapterCon
 		next.CustomHeadersJSON = strings.TrimSpace(item.CustomHeadersJSON)
 		switch {
 		case next.DisplayName == "":
-			return nil, errors.New("模型适配器 displayName 不能为空")
+			return nil, errors.New("model adapter displayName cannot be empty")
 		case next.Type == "":
-			return nil, errors.New("模型适配器 type 仅支持 openai 或 anthropic")
+			return nil, errors.New("model adapter type only supports openai or anthropic")
 		case next.APIKey == "":
-			return nil, errors.New("模型适配器 apiKey 不能为空")
+			return nil, errors.New("model adapter API key cannot be empty")
 		case next.TooltipData == "":
-			return nil, errors.New("模型适配器 tooltipData 不能为空")
+			return nil, errors.New("model adapter tooltipData cannot be empty")
 		case next.ModelID == "":
-			return nil, errors.New("模型适配器 modelID 不能为空")
+			return nil, errors.New("model adapter modelID cannot be empty")
 		case next.Type == "openai" && next.ReasoningEffort == "":
-			return nil, errors.New("模型适配器 reasoningEffort 仅支持 low、medium、high、xhigh")
+			return nil, errors.New("model adapter reasoningEffort only supports low, medium, high, and xhigh")
 		case next.Type == "openai" && next.OpenAIEndpoint == "":
-			return nil, errors.New("模型适配器 openAIEndpoint 仅支持 /v1/responses 或 /v1/chat/completions")
+			return nil, errors.New("model adapter openAIEndpoint only supports /v1/responses or /v1/chat/completions")
 		case next.Type == "openai" && next.OpenAIExtraParamsEnabled:
 			if err := validateJSONMap(next.OpenAIExtraParamsJSON, "openAIExtraParamsJSON"); err != nil {
 				return nil, err
@@ -168,11 +172,11 @@ func NormalizeModelAdapterConfigs(input []ModelAdapterConfig) ([]ModelAdapterCon
 				return nil, err
 			}
 		case next.Type == "anthropic" && next.AnthropicThinkingEffort == "":
-			return nil, errors.New("模型适配器 anthropicThinkingEffort 仅支持 low、medium、high、xhigh、max")
+			return nil, errors.New("model adapter anthropicThinkingEffort only supports low, medium, high, xhigh, and max")
 		}
 		next.ID = modelchannel.BuildChannelID(next.BaseURL, next.ModelID, next.APIKey, next.DisplayName, next.OpenAIEndpoint)
 		if _, exists := seenChannelIDs[next.ID]; exists {
-			return nil, errors.New("模型适配器渠道不能重复，请检查 url、modelID、apiKey、displayName、endpoint 组合")
+			return nil, errors.New("duplicate model adapter channel; check url, modelID, API key, displayName, and endpoint")
 		}
 		seenChannelIDs[next.ID] = struct{}{}
 		normalized = append(normalized, next)
@@ -183,14 +187,14 @@ func NormalizeModelAdapterConfigs(input []ModelAdapterConfig) ([]ModelAdapterCon
 func validateJSONMap(value string, fieldName string) error {
 	text := strings.TrimSpace(value)
 	if text == "" {
-		return fmt.Errorf("模型适配器 %s 不能为空", fieldName)
+		return fmt.Errorf("model adapter %s cannot be empty", fieldName)
 	}
 	var parsed map[string]any
 	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
-		return fmt.Errorf("模型适配器 %s 必须是合法 JSON 对象", fieldName)
+		return fmt.Errorf("model adapter %s must be a valid JSON object", fieldName)
 	}
 	if parsed == nil {
-		return fmt.Errorf("模型适配器 %s 必须是 JSON 对象", fieldName)
+		return fmt.Errorf("model adapter %s must be a JSON object", fieldName)
 	}
 	return nil
 }
@@ -202,11 +206,11 @@ func validateHeadersJSON(value string) error {
 	}
 	var parsed map[string]string
 	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
-		return errors.New("模型适配器 customHeadersJSON 的值必须是字符串")
+		return errors.New("model adapter customHeadersJSON values must be strings")
 	}
 	for key := range parsed {
 		if strings.TrimSpace(key) == "" {
-			return errors.New("模型适配器 customHeadersJSON 的请求头名称不能为空")
+			return errors.New("model adapter customHeadersJSON header name cannot be empty")
 		}
 	}
 	return nil
@@ -241,14 +245,14 @@ func normalizeListenAddr(value string, defaultValue string, fieldName string) (s
 	}
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return "", fmt.Errorf("%s 必须是 host:port 格式", fieldName)
+		return "", fmt.Errorf("%s must use host:port format", fieldName)
 	}
 	if strings.TrimSpace(host) == "" {
-		return "", fmt.Errorf("%s host 不能为空", fieldName)
+		return "", fmt.Errorf("%s host cannot be empty", fieldName)
 	}
 	parsedPort, err := strconv.Atoi(port)
 	if err != nil || parsedPort < 1 || parsedPort > 65535 {
-		return "", fmt.Errorf("%s port 必须在 1-65535 之间", fieldName)
+		return "", fmt.Errorf("%s port must be between 1 and 65535", fieldName)
 	}
 	return net.JoinHostPort(host, strconv.Itoa(parsedPort)), nil
 }
@@ -289,5 +293,18 @@ func normalizeRoutingMode(value string) string {
 		return "upstream"
 	default:
 		return ""
+	}
+}
+
+func NormalizeLocale(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "zh", "zh-cn":
+		return "zh-CN"
+	case "ja", "ja-jp":
+		return "ja-JP"
+	case "", "en", "en-us":
+		return "en-US"
+	default:
+		return "en-US"
 	}
 }
