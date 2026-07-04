@@ -77,12 +77,12 @@ func (store *Store) Load(_ context.Context) (Config, error) {
 			}
 			return defaultConfig, nil
 		}
-		return DefaultConfig(), fmt.Errorf("读取用户配置失败: %w", err)
+		return DefaultConfig(), fmt.Errorf("read user config failed: %w", err)
 	}
 
 	var current Config
 	if err := yaml.Unmarshal(data, &current); err != nil {
-		return DefaultConfig(), fmt.Errorf("解析用户配置失败: %w", err)
+		return DefaultConfig(), fmt.Errorf("parse user config failed: %w", err)
 	}
 	normalized, err := NormalizeConfig(current)
 	if err != nil {
@@ -98,16 +98,17 @@ func (store *Store) Load(_ context.Context) (Config, error) {
 
 func (store *Store) Save(_ context.Context, cfg Config) (Config, error) {
 	if store == nil || strings.TrimSpace(store.path) == "" {
-		return Config{}, errors.New("配置存储未初始化")
-	}
-
-	normalized, err := NormalizeConfig(cfg)
-	if err != nil {
-		return Config{}, err
+		return Config{}, errors.New("config store is not initialized")
 	}
 
 	store.mu.Lock()
 	defer store.mu.Unlock()
+
+	cfg = store.mergeExistingLocaleLocked(cfg)
+	normalized, err := NormalizeConfig(cfg)
+	if err != nil {
+		return Config{}, err
+	}
 
 	if err := store.saveLocked(normalized); err != nil {
 		return Config{}, err
@@ -115,31 +116,47 @@ func (store *Store) Save(_ context.Context, cfg Config) (Config, error) {
 	return normalized, nil
 }
 
+func (store *Store) mergeExistingLocaleLocked(cfg Config) Config {
+	if strings.TrimSpace(cfg.Locale) != "" || store == nil || strings.TrimSpace(store.path) == "" {
+		return cfg
+	}
+	data, err := os.ReadFile(store.path)
+	if err != nil || len(strings.TrimSpace(string(data))) == 0 {
+		return cfg
+	}
+	var current Config
+	if err := yaml.Unmarshal(data, &current); err != nil {
+		return cfg
+	}
+	cfg.Locale = current.Locale
+	return cfg
+}
+
 func (store *Store) saveLocked(normalized Config) error {
 	if err := os.MkdirAll(filepath.Dir(store.path), 0o755); err != nil {
-		return fmt.Errorf("创建用户配置目录失败: %w", err)
+		return fmt.Errorf("create user config directory failed: %w", err)
 	}
 
 	data, err := yaml.Marshal(normalized)
 	if err != nil {
-		return fmt.Errorf("序列化用户配置失败: %w", err)
+		return fmt.Errorf("serialize user config failed: %w", err)
 	}
 
 	tempPath := store.path + ".tmp"
 	if err := os.WriteFile(tempPath, data, 0o644); err != nil {
-		return fmt.Errorf("写入临时配置失败: %w", err)
+		return fmt.Errorf("write temporary config failed: %w", err)
 	}
 	if err := os.Rename(tempPath, store.path); err != nil {
-		return fmt.Errorf("保存用户配置失败: %w", err)
+		return fmt.Errorf("save user config failed: %w", err)
 	}
 	return nil
 }
 
 func shouldPersistNormalizedConfig(raw []byte, current Config, normalized Config) bool {
-	if !yamlHasKey(raw, "backendListenAddr") || !yamlHasKey(raw, "proxyListenAddr") {
+	if !yamlHasKey(raw, "backendListenAddr") || !yamlHasKey(raw, "proxyListenAddr") || !yamlHasKey(raw, "locale") {
 		return true
 	}
-	if current.BackendListenAddr != normalized.BackendListenAddr || current.ProxyListenAddr != normalized.ProxyListenAddr {
+	if current.BackendListenAddr != normalized.BackendListenAddr || current.ProxyListenAddr != normalized.ProxyListenAddr || current.Locale != normalized.Locale {
 		return true
 	}
 	if current.ProviderStreamIdleTimeout == normalized.ProviderStreamIdleTimeout {
