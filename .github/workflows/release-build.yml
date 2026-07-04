@@ -88,6 +88,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
+            curl \
             pkg-config \
             unzip \
             zip \
@@ -189,9 +190,6 @@ jobs:
           protoc-gen-go --version
           protoc-gen-connect-go --version
 
-      - name: Verify proto generation
-        run: task common:generate:proto
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -203,6 +201,9 @@ jobs:
         uses: arduino/setup-task@v2
         with:
           version: ${{ env.TASK_VERSION }}
+
+      - name: Verify proto generation
+        run: task common:generate:proto
 
       - name: Install Wails v3 CLI
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS3_VERSION }}
