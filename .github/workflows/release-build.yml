@@ -229,7 +229,7 @@ jobs:
 
           # The repository's release:build:macos:amd64 task is internal, so reproduce
           # the same package:archive steps here without invoking internal tasks directly.
-          task common:go:mod:tidy
+          go mod tidy
           task common:generate:icons
 
           output="bin/cursor-release-macos-amd64"
