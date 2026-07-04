@@ -124,7 +124,7 @@ jobs:
         run: |
           release_dir="$(find bin/release -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)"
           test -n "$release_dir"
-          find "$release_dir" -maxdepth 1 -type f -printf "%f\n" | sort | tee linux-build-files.txt
+          find "$release_dir" -maxdepth 1 -type f | sort | while read -r file; do basename "$file"; done | tee linux-build-files.txt
 
       - name: Upload Linux build artifacts
         uses: actions/upload-artifact@v4
@@ -181,7 +181,7 @@ jobs:
         run: |
           release_dir="$(find bin/release -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)"
           test -n "$release_dir"
-          find "$release_dir" -maxdepth 1 -type f -printf "%f\n" | sort | tee macos-windows-build-files.txt
+          find "$release_dir" -maxdepth 1 -type f | sort | while read -r file; do basename "$file"; done | tee macos-windows-build-files.txt
 
       - name: Upload macOS and Windows build artifacts
         uses: actions/upload-artifact@v4
@@ -222,7 +222,7 @@ jobs:
           {
             echo "## Build files"
             echo
-            find release-assets -maxdepth 1 -type f ! -name '.release-notes.md' -printf '- `%f`\n' | sort
+            find release-assets -maxdepth 1 -type f ! -name '.release-notes.md' | sort | while read -r file; do printf -- '- `%s`\n' "$(basename "$file")"; done
           } | tee build-files.md
 
           cat "$notes_file" > release-body.md
