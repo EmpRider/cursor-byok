@@ -2,14 +2,15 @@
 package forwarder
 
 import (
-	"context"
 	"fmt"
+	"os"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 
 	"cursor/gen/agentv1"
 	"cursor/internal/appdata"
 	modeladapter "cursor/internal/backend/agent/model"
-	serverconfig "cursor/internal/backend/server/config"
 	promptassets "cursor/prompt"
 )
 
@@ -261,16 +262,39 @@ func plainUserMessageText(message modeladapter.Message) (string, bool) {
 }
 
 func currentLocaleResponseInstruction() string {
-	store := serverconfig.NewStore(appdata.ConfigFilePath(), appdata.LogsRootPath())
-	cfg, err := store.Load(context.Background())
+	return localeResponseInstruction(readConfiguredLocale())
+}
+
+func readConfiguredLocale() string {
+	data, err := os.ReadFile(appdata.ConfigFilePath())
 	if err != nil {
-		cfg = serverconfig.DefaultConfig()
+		return "en-US"
 	}
-	return localeResponseInstruction(cfg.Locale)
+	var decoded map[string]any
+	if err := yaml.Unmarshal(data, &decoded); err != nil {
+		return "en-US"
+	}
+	if value, ok := decoded["locale"].(string); ok {
+		return normalizeLocale(value)
+	}
+	return "en-US"
+}
+
+func normalizeLocale(locale string) string {
+	switch strings.ToLower(strings.TrimSpace(locale)) {
+	case "zh", "zh-cn":
+		return "zh-CN"
+	case "ja", "ja-jp":
+		return "ja-JP"
+	case "", "en", "en-us":
+		return "en-US"
+	default:
+		return "en-US"
+	}
 }
 
 func localeResponseInstruction(locale string) string {
-	switch serverconfig.NormalizeLocale(locale) {
+	switch normalizeLocale(locale) {
 	case "zh-CN":
 		return "请始终使用简体中文回答，除非用户明确要求使用其他语言。"
 	case "ja-JP":
