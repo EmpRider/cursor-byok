@@ -27,7 +27,7 @@ function isSupportedLocale(locale) {
   return SUPPORTED_LOCALES.includes(locale);
 }
 
-function matchSupportedLocale(locale) {
+export function matchSupportedLocale(locale) {
   const normalized = String(locale || "").trim().replace(/_/g, "-");
   if (!normalized) {
     return "";
@@ -41,6 +41,10 @@ function matchSupportedLocale(locale) {
 
   const primaryLanguage = lowered.split("-")[0];
   return languageLocaleMap[primaryLanguage] || "";
+}
+
+export function normalizeLocale(locale, fallback = DEFAULT_LOCALE) {
+  return matchSupportedLocale(locale) || matchSupportedLocale(fallback) || DEFAULT_LOCALE;
 }
 
 function getSystemLocaleCandidates() {
@@ -102,10 +106,34 @@ function persistManualLocale(locale) {
   window.localStorage.setItem(LOCALE_STORAGE_SOURCE_KEY, "manual");
 }
 
+function warnMissingTranslation(id, locale) {
+  if (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.DEV) {
+    console.warn(`[i18n] missing translation id=${id} locale=${locale}`);
+  }
+}
+
 function resolveMessage(id, fallback) {
-  const activeMessages = localeMessages[currentLocale.value] || {};
+  const activeLocale = currentLocale.value;
+  const activeMessages = localeMessages[activeLocale] || {};
   const sourceMessages = localeMessages[SOURCE_LOCALE] || {};
-  return activeMessages[id] || sourceMessages[id] || fallback || "";
+
+  if (activeMessages[id]) {
+    return activeMessages[id];
+  }
+
+  warnMissingTranslation(id, activeLocale);
+
+  if (fallback) {
+    return fallback;
+  }
+
+  // Only the source locale is allowed to fall back to source messages. This prevents
+  // English or Japanese UI from unexpectedly showing Chinese text for missing keys.
+  if (activeLocale === SOURCE_LOCALE && sourceMessages[id]) {
+    return sourceMessages[id];
+  }
+
+  return id || "";
 }
 
 function interpolateMessage(template, args = []) {
@@ -150,10 +178,12 @@ export function getLocale() {
   return currentLocale.value;
 }
 
-export function setLocale(locale) {
-  const nextLocale = matchSupportedLocale(locale) || DEFAULT_LOCALE;
+export function setLocale(locale, { persist = true } = {}) {
+  const nextLocale = normalizeLocale(locale);
   currentLocale.value = nextLocale;
-  persistManualLocale(nextLocale);
+  if (persist) {
+    persistManualLocale(nextLocale);
+  }
   applyLocaleToDocument(nextLocale);
   return nextLocale;
 }
