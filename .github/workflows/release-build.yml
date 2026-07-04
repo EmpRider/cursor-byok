@@ -42,7 +42,7 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
-      - name: Validate tag is on release branch
+      - name: Validate tag is on main branch
         id: release
         run: |
           set -euo pipefail
@@ -56,12 +56,8 @@ jobs:
           git fetch --force origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'
 
           # Git tags do not technically belong to a branch. We enforce the release
-          # rule by requiring the tagged commit to be contained by the release branch.
-          # Prefer master when it exists; this repository currently uses main.
-          release_branch="master"
-          if ! git show-ref --verify --quiet refs/remotes/origin/master; then
-            release_branch="main"
-          fi
+          # rule by requiring the tagged commit to be contained by main.
+          release_branch="main"
 
           tag_sha="$(git rev-list -n 1 "$tag")"
           if ! git merge-base --is-ancestor "$tag_sha" "origin/$release_branch"; then
