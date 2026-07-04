@@ -2,11 +2,14 @@
 package forwarder
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	"cursor/gen/agentv1"
+	"cursor/internal/appdata"
 	modeladapter "cursor/internal/backend/agent/model"
+	serverconfig "cursor/internal/backend/server/config"
 	promptassets "cursor/prompt"
 )
 
@@ -74,6 +77,9 @@ func (compiler *DefaultPromptCompiler) Compile(conversation *ConversationFile, m
 	systemParts := []string{sanitizePromptAsset(systemPrompt, modelName)}
 	if strings.TrimSpace(sharedRulesPrompt) != "" {
 		systemParts = append(systemParts, sharedRulesPrompt)
+	}
+	if instruction := currentLocaleResponseInstruction(); instruction != "" {
+		systemParts = append(systemParts, instruction)
 	}
 	systemText := strings.TrimSpace(strings.Join(filterNonEmpty(systemParts), "\n\n"))
 	if systemText != "" {
@@ -252,4 +258,24 @@ func plainUserMessageText(message modeladapter.Message) (string, bool) {
 		return "", false
 	}
 	return text, true
+}
+
+func currentLocaleResponseInstruction() string {
+	store := serverconfig.NewStore(appdata.ConfigFilePath(), appdata.LogsRootPath())
+	cfg, err := store.Load(context.Background())
+	if err != nil {
+		cfg = serverconfig.DefaultConfig()
+	}
+	return localeResponseInstruction(cfg.Locale)
+}
+
+func localeResponseInstruction(locale string) string {
+	switch serverconfig.NormalizeLocale(locale) {
+	case "zh-CN":
+		return "请始终使用简体中文回答，除非用户明确要求使用其他语言。"
+	case "ja-JP":
+		return "ユーザーが別の言語を明示的に指定しない限り、常に日本語で回答してください。"
+	default:
+		return "Always respond in English unless the user explicitly asks for another language."
+	}
 }
