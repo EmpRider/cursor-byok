@@ -192,11 +192,54 @@ jobs:
 
       - name: Build macOS and Windows release assets
         run: |
+          set -euo pipefail
+
           task release:clean
           task common:update:build-assets
-          task release:notes
+
+          app_version="$(go run ./scripts/release version -config ./build/config.yml)"
+          app_name="Cursor助手"
+          release_dir="bin/release/${app_version}"
+          release_base_name="cursor-byok"
+
+          go run ./scripts/release notes \
+            -config ./build/config.yml \
+            -out "${release_dir}/.release-notes.md" \
+            -source release-notes.md
+
           task release:build:macos:arm64 SCAN=false
-          task release:build:macos:amd64 SCAN=false
+
+          # The repository's release:build:macos:amd64 task is internal, so reproduce
+          # the same package:archive steps here without invoking internal tasks directly.
+          task common:go:mod:tidy
+          task common:generate:icons
+
+          output="bin/cursor-release-macos-amd64"
+          app_bundle="${app_name}.app"
+          archive_path="${release_dir}/${release_base_name}-${app_version}-macos-amd64.tar.gz"
+
+          GOOS=darwin \
+          CGO_ENABLED=1 \
+          GOARCH=amd64 \
+          CGO_CFLAGS="-mmacosx-version-min=10.15" \
+          CGO_LDFLAGS="-mmacosx-version-min=10.15" \
+          MACOSX_DEPLOYMENT_TARGET="10.15" \
+            go build -tags production -trimpath -buildvcs=false \
+              -ldflags "-w -s -X cursor/internal/buildinfo.Version=${app_version}" \
+              -o "${output}"
+
+          rm -rf "bin/${app_bundle}"
+          mkdir -p "bin/${app_bundle}/Contents/MacOS"
+          mkdir -p "bin/${app_bundle}/Contents/Resources"
+          cp build/darwin/icons.icns "bin/${app_bundle}/Contents/Resources"
+          cp "${output}" "bin/${app_bundle}/Contents/MacOS/${app_name}"
+          cp build/darwin/Info.plist "bin/${app_bundle}/Contents"
+          codesign --force --deep --sign - "bin/${app_bundle}"
+          rm -f "${archive_path}"
+          env LC_ALL=C tar -C bin -czf "${archive_path}" "${app_bundle}"
+          rm -f "${output}"
+          rm -rf "bin/${app_bundle}"
+
           task release:build:windows:amd64 SCAN=false
 
       - name: List macOS and Windows build files
