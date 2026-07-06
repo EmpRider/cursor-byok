@@ -83,6 +83,39 @@ jobs:
           fetch-depth: 0
           ref: ${{ needs.validate-release-ref.outputs.tag }}
 
+      - name: Set build version from tag
+        run: |
+          set -euo pipefail
+          release_version="${{ needs.validate-release-ref.outputs.tag }}"
+          release_version="${release_version#v}"
+          RELEASE_VERSION="$release_version" python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path("build/config.yml")
+          lines = path.read_text().splitlines()
+          in_info = False
+          updated = False
+
+          for index, line in enumerate(lines):
+              if line.startswith("info:"):
+                  in_info = True
+                  continue
+              if in_info and line and not line.startswith((" ", "\t")):
+                  in_info = False
+              if in_info and line.lstrip().startswith("version:"):
+                  indent = line[: len(line) - len(line.lstrip())]
+                  lines[index] = f'{indent}version: "{os.environ["RELEASE_VERSION"]}"'
+                  updated = True
+                  break
+
+          if not updated:
+              raise SystemExit("build/config.yml info.version was not found")
+
+          path.write_text("\n".join(lines) + "\n")
+          PY
+          go run ./scripts/release version -config ./build/config.yml
+
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
@@ -171,6 +204,39 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.validate-release-ref.outputs.tag }}
+
+      - name: Set build version from tag
+        run: |
+          set -euo pipefail
+          release_version="${{ needs.validate-release-ref.outputs.tag }}"
+          release_version="${release_version#v}"
+          RELEASE_VERSION="$release_version" python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path("build/config.yml")
+          lines = path.read_text().splitlines()
+          in_info = False
+          updated = False
+
+          for index, line in enumerate(lines):
+              if line.startswith("info:"):
+                  in_info = True
+                  continue
+              if in_info and line and not line.startswith((" ", "\t")):
+                  in_info = False
+              if in_info and line.lstrip().startswith("version:"):
+                  indent = line[: len(line) - len(line.lstrip())]
+                  lines[index] = f'{indent}version: "{os.environ["RELEASE_VERSION"]}"'
+                  updated = True
+                  break
+
+          if not updated:
+              raise SystemExit("build/config.yml info.version was not found")
+
+          path.write_text("\n".join(lines) + "\n")
+          PY
+          go run ./scripts/release version -config ./build/config.yml
 
       - name: Setup Go
         uses: actions/setup-go@v5
