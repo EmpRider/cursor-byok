@@ -55,6 +55,8 @@ const openAIEndpointOptions = [
 const editorIndex = ref(-1);
 const draft = reactive(createEmptyModelAdapter());
 const errorMessage = ref("");
+const fetchModelsMessage = ref("");
+const fetchingModels = ref(false);
 const loading = ref(true);
 const lastTestAdapterID = ref("");
 const localTestFailure = ref("");
@@ -123,7 +125,7 @@ function ensureAnthropicThinkingEffort() {
 const fieldTips = {
   displayName: "仅用于界面展示，便于你区分不同模型。",
   modelID: "请求实际发送给服务端的模型名称，例如 gpt-4.1 或 claude-sonnet。",
-  baseURL: "模型服务的 API 根地址，通常为兼容 OpenAI 或 Anthropic 的接口入口。",
+  baseURL: "模型服务的 API 根地址，通常为兼容 OpenAI 或 Anthropic 的接口入口。可以填 /v1 根地址，也可以填 /v1/models 后点击 Fetch Models 批量导入。",
   apiKey: "调用该模型服务需要使用的访问密钥。",
   contextWindowTokens: "模型单次可接受的最大上下文 Token 数。留空时使用默认值。",
   reasoningEffort: "推理强度仅对部分支持 reasoning_effort 的模型生效，并不是所有模型都支持。越高通常越稳，但也可能更慢。",
@@ -181,6 +183,124 @@ async function persistDraft() {
     error: "",
     adapter: result.adapter ? normalizeModelAdapter(result.adapter) : normalizeModelAdapter(draft),
   };
+}
+
+function normalizeURLText(value) {
+  return String(value || "").trim().replace(/\/+$/, "");
+}
+
+function buildModelsEndpointURL(value) {
+  const text = normalizeURLText(value);
+  if (!text) {
+    throw new Error("Enter a Base URL or /v1/models endpoint before fetching models.");
+  }
+  const url = new URL(text);
+  const cleanPath = url.pathname.replace(/\/+$/, "");
+  url.pathname = cleanPath.endsWith("/models") ? cleanPath : `${cleanPath}/models`.replace(/\/{2,}/g, "/");
+  return normalizeURLText(url.toString());
+}
+
+function deriveBaseURLFromModelsEndpoint(modelsEndpointURL) {
+  const url = new URL(modelsEndpointURL);
+  url.search = "";
+  url.hash = "";
+  url.pathname = url.pathname.replace(/\/+$/, "").replace(/\/models$/, "");
+  return normalizeURLText(url.toString());
+}
+
+function extractFetchedModelIDs(payload) {
+  if (!payload || !Array.isArray(payload.data)) {
+    return [];
+  }
+  const seen = new Set();
+  const ids = [];
+  for (const item of payload.data) {
+    const id = String(item?.id || "").trim();
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+function createFetchedModelAdapter(modelID, baseURL) {
+  return normalizeModelAdapter({
+    ...createEmptyModelAdapter(),
+    type: "openai",
+    displayName: modelID,
+    modelID,
+    baseURL,
+    apiKey: draft.apiKey,
+  });
+}
+
+function buildExistingFetchedModelKey(adapter) {
+  const normalized = normalizeModelAdapter(adapter);
+  return [normalizeURLText(normalized.baseURL), normalized.modelID].join("\n");
+}
+
+async function handleFetchModels() {
+  if (fetchingModels.value) {
+    return;
+  }
+
+  errorMessage.value = "";
+  fetchModelsMessage.value = "";
+
+  if (!String(draft.apiKey || "").trim()) {
+    errorMessage.value = "Enter the API Key before fetching models. Imported models reuse this key because model settings require an API key.";
+    return;
+  }
+
+  fetchingModels.value = true;
+  try {
+    const modelsEndpointURL = buildModelsEndpointURL(draft.baseURL);
+    const baseURL = deriveBaseURLFromModelsEndpoint(modelsEndpointURL);
+    const headers = { Accept: "application/json" };
+    if (String(draft.apiKey || "").trim()) {
+      headers.Authorization = `Bearer ${String(draft.apiKey).trim()}`;
+    }
+
+    const response = await fetch(modelsEndpointURL, { headers });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch models: HTTP ${response.status}`);
+    }
+
+    const payload = await response.json();
+    const modelIDs = extractFetchedModelIDs(payload);
+    if (modelIDs.length === 0) {
+      throw new Error("No model IDs found in the models response.");
+    }
+
+    const existingKeys = new Set(appState.modelAdapters.map((adapter) => buildExistingFetchedModelKey(adapter)));
+    let addedCount = 0;
+    let skippedCount = 0;
+
+    for (const modelID of modelIDs) {
+      const adapter = createFetchedModelAdapter(modelID, baseURL);
+      const key = buildExistingFetchedModelKey(adapter);
+      if (existingKeys.has(key)) {
+        skippedCount += 1;
+        continue;
+      }
+
+      const result = await saveModelAdapterAt(-1, adapter);
+      if (!result.ok) {
+        throw new Error(result.error || `Failed to save model ${modelID}`);
+      }
+      existingKeys.add(key);
+      addedCount += 1;
+    }
+
+    draft.baseURL = baseURL;
+    fetchModelsMessage.value = `Added ${addedCount} model(s).${skippedCount ? ` Skipped ${skippedCount} existing model(s).` : ""}`;
+  } catch (error) {
+    errorMessage.value = toUserError(error);
+  } finally {
+    fetchingModels.value = false;
+  }
 }
 
 async function handleSave() {
@@ -364,6 +484,19 @@ onMounted(async () => {
               :placeholder="interfacePlaceholder"
               class="h-9 rounded-[6px] border border-[#3f3f3f] bg-[#232323] px-3 text-sm text-[#e5e5e5] outline-none focus:border-[#10AD5D]"
             />
+            <div v-if="draft.type === 'openai'" class="mt-1 flex flex-wrap items-center justify-between gap-2">
+              <span class="text-xs text-[#8f8f8f]">Use /v1 or /v1/models, then import all returned model IDs.</span>
+              <Button
+                variant="default"
+                :disabled="fetchingModels || appState.configSaving"
+                @click="handleFetchModels"
+              >
+                {{ fetchingModels ? "Fetching..." : "Fetch Models" }}
+              </Button>
+            </div>
+            <div v-if="fetchModelsMessage" class="text-xs text-[#86efac]">
+              {{ fetchModelsMessage }}
+            </div>
           </label>
 
           <label class="flex flex-col gap-1">
