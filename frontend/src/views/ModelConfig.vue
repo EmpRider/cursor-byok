@@ -4,6 +4,7 @@ import Card from "@/components/ui/Card.vue";
 import Input from "@/components/ui/Input.vue";
 import ModelAdapterTestCard from "@/components/ModelAdapterTestCard.vue";
 import { showModal } from "@/composables/useModal";
+import { fetchModelIDs } from "@/services/clientApi";
 import {
   appState,
   createEmptyModelAdapter,
@@ -110,44 +111,6 @@ function normalizeURLText(value) {
   return String(value || "").trim().replace(/\/+$/, "");
 }
 
-function normalizeImportBaseURL(value) {
-  const text = normalizeURLText(value);
-  if (!text) {
-    throw new Error("Base URL is required.");
-  }
-
-  const url = new URL(text);
-  url.search = "";
-  url.hash = "";
-  url.pathname = url.pathname.replace(/\/+$/, "").replace(/\/models$/, "");
-  return normalizeURLText(url.toString());
-}
-
-function buildModelsEndpointURL(baseURL) {
-  const url = new URL(baseURL);
-  const cleanPath = url.pathname.replace(/\/+$/, "");
-  url.pathname = `${cleanPath}/models`.replace(/\/{2,}/g, "/");
-  return normalizeURLText(url.toString());
-}
-
-function extractFetchedModelIDs(payload) {
-  if (!payload || !Array.isArray(payload.data)) {
-    return [];
-  }
-
-  const seen = new Set();
-  const ids = [];
-  for (const item of payload.data) {
-    const id = String(item?.id || "").trim();
-    if (!id || seen.has(id)) {
-      continue;
-    }
-    seen.add(id);
-    ids.push(id);
-  }
-  return ids;
-}
-
 function buildImportDedupeKey(adapter) {
   const normalized = normalizeModelAdapter(adapter);
   return [normalized.type, normalizeURLText(normalized.baseURL), normalized.modelID].join("\n");
@@ -197,20 +160,13 @@ async function handleFetchModelsFromModal() {
 
   importFetching.value = true;
   try {
-    const baseURL = normalizeImportBaseURL(importForm.baseURL);
-    const modelsEndpointURL = buildModelsEndpointURL(baseURL);
-    const headers = {
-      Accept: "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    };
-
-    const response = await fetch(modelsEndpointURL, { headers });
-    if (!response.ok) {
-      throw new Error(`Failed to fetch models: HTTP ${response.status}`);
-    }
-
-    const payload = await response.json();
-    const modelIDs = extractFetchedModelIDs(payload);
+    const result = await fetchModelIDs({
+      apiType,
+      baseURL: importForm.baseURL,
+      apiKey,
+    });
+    const baseURL = normalizeURLText(result?.baseURL || importForm.baseURL);
+    const modelIDs = Array.isArray(result?.modelIDs) ? result.modelIDs : [];
     if (modelIDs.length === 0) {
       throw new Error("No model IDs found in the models response.");
     }
@@ -227,9 +183,9 @@ async function handleFetchModelsFromModal() {
         continue;
       }
 
-      const result = await saveModelAdapterAt(-1, adapter);
-      if (!result.ok) {
-        throw new Error(result.error || `Failed to save model ${modelID}`);
+      const saveResult = await saveModelAdapterAt(-1, adapter);
+      if (!saveResult.ok) {
+        throw new Error(saveResult.error || `Failed to save model ${modelID}`);
       }
       existingKeys.add(key);
       addedCount += 1;
@@ -516,7 +472,7 @@ onBeforeUnmount(() => {
               placeholder="http://localhost:20128/v1"
               class="h-9 rounded-[6px] border border-[#3f3f3f] bg-[#232323] px-3 text-sm text-[#e5e5e5] outline-none focus:border-[#10AD5D]"
             />
-            <span class="text-xs text-[#8f8f8f]">Do not include /models. The fetch URL will be Base URL + /models.</span>
+            <span class="text-xs text-[#8f8f8f]">Do not include /models. The backend fetch URL will be Base URL + /models.</span>
           </label>
 
           <label class="flex flex-col gap-1">
