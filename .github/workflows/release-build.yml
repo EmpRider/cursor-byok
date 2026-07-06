@@ -1,21 +1,29 @@
 name: Release Tag Build
 
 on:
-  push:
-    tags:
-      - "v*"
+  pull_request:
+    types:
+      - closed
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to build, for example v0.0.39"
-        required: true
+        description: "Optional release tag, for example v0.0.44. Leave empty to auto-increment the latest patch tag."
+        required: false
+        type: string
+      target_ref:
+        description: "Target branch, tag, or commit to release. Defaults to main."
+        required: false
+        default: main
         type: string
 
 permissions:
   contents: write
+  pull-requests: read
 
 concurrency:
-  group: release-build-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  group: release-build-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.pull_request.merge_commit_sha || github.sha }}
   cancel-in-progress: false
 
 defaults:
@@ -33,62 +41,103 @@ env:
 
 jobs:
   validate-release-ref:
-    name: Validate release tag
+    name: Resolve release tag
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
     runs-on: ubuntu-22.04
     outputs:
       tag: ${{ steps.release.outputs.tag }}
-      release_branch: ${{ steps.release.outputs.release_branch }}
+      app_version: ${{ steps.release.outputs.app_version }}
+      target_sha: ${{ steps.release.outputs.target_sha }}
+      previous_tag: ${{ steps.release.outputs.previous_tag }}
+      release_branch: main
     steps:
-      - name: Checkout tag
+      - name: Checkout release source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          ref: main
 
-      - name: Validate tag is on main branch
+      - name: Resolve release tag and target commit
         id: release
+        env:
+          REQUESTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
+          TARGET_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.target_ref || 'main' }}
+          EVENT_NAME: ${{ github.event_name }}
+          MERGE_COMMIT_SHA: ${{ github.event.pull_request.merge_commit_sha || '' }}
         run: |
           set -euo pipefail
 
-          tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Tag must look like v0.0.39, got: $tag" >&2
+          git fetch --force origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            target_sha="$MERGE_COMMIT_SHA"
+          else
+            target_sha="$(git rev-list -n 1 "$TARGET_REF")"
+          fi
+
+          if [[ -z "$target_sha" ]]; then
+            echo "Could not resolve release target commit." >&2
             exit 1
           fi
 
-          git fetch --force origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'
-
-          # Git tags do not technically belong to a branch. We enforce the release
-          # rule by requiring the tagged commit to be contained by main.
-          release_branch="main"
-
-          tag_sha="$(git rev-list -n 1 "$tag")"
-          if ! git merge-base --is-ancestor "$tag_sha" "origin/$release_branch"; then
-            echo "Tagged commit $tag_sha is not contained in origin/$release_branch" >&2
+          if ! git merge-base --is-ancestor "$target_sha" origin/main; then
+            echo "Release target $target_sha is not contained in origin/main" >&2
             exit 1
+          fi
+
+          latest_tag="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1 || true)"
+
+          if [[ -n "$REQUESTED_TAG" ]]; then
+            tag="$REQUESTED_TAG"
+          elif [[ -z "$latest_tag" ]]; then
+            tag="v0.0.1"
+          else
+            version="${latest_tag#v}"
+            IFS='.' read -r major minor patch <<< "$version"
+            patch="$((patch + 1))"
+            tag="v${major}.${minor}.${patch}"
+          fi
+
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Tag must look like v0.0.44, got: $tag" >&2
+            exit 1
+          fi
+
+          if git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
+            existing_sha="$(git rev-list -n 1 "$tag")"
+            if [[ "$existing_sha" != "$target_sha" ]]; then
+              echo "Tag $tag already exists at $existing_sha, not target $target_sha" >&2
+              exit 1
+            fi
           fi
 
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "release_branch=$release_branch" >> "$GITHUB_OUTPUT"
-          echo "Building release tag $tag from $release_branch" >> "$GITHUB_STEP_SUMMARY"
+          echo "app_version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "target_sha=$target_sha" >> "$GITHUB_OUTPUT"
+          echo "previous_tag=$latest_tag" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "Release tag: $tag"
+            echo "Version: ${tag#v}"
+            echo "Target commit: $target_sha"
+            echo "Previous tag: ${latest_tag:-none}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   build-linux:
     name: Build Linux amd64
     needs: validate-release-ref
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout tag
+      - name: Checkout release source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ needs.validate-release-ref.outputs.tag }}
+          ref: ${{ needs.validate-release-ref.outputs.target_sha }}
 
       - name: Set build version from tag
         run: |
           set -euo pipefail
-          release_version="${{ needs.validate-release-ref.outputs.tag }}"
-          release_version="${release_version#v}"
-          RELEASE_VERSION="$release_version" python3 - <<'PY'
+          RELEASE_VERSION="${{ needs.validate-release-ref.outputs.app_version }}" python3 - <<'PY'
           import os
           from pathlib import Path
 
@@ -114,7 +163,6 @@ jobs:
 
           path.write_text("\n".join(lines) + "\n")
           PY
-          go run ./scripts/release version -config ./build/config.yml
 
       - name: Install Linux build dependencies
         run: |
@@ -199,18 +247,16 @@ jobs:
     needs: validate-release-ref
     runs-on: macos-15
     steps:
-      - name: Checkout tag
+      - name: Checkout release source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ needs.validate-release-ref.outputs.tag }}
+          ref: ${{ needs.validate-release-ref.outputs.target_sha }}
 
       - name: Set build version from tag
         run: |
           set -euo pipefail
-          release_version="${{ needs.validate-release-ref.outputs.tag }}"
-          release_version="${release_version#v}"
-          RELEASE_VERSION="$release_version" python3 - <<'PY'
+          RELEASE_VERSION="${{ needs.validate-release-ref.outputs.app_version }}" python3 - <<'PY'
           import os
           from pathlib import Path
 
@@ -236,7 +282,6 @@ jobs:
 
           path.write_text("\n".join(lines) + "\n")
           PY
-          go run ./scripts/release version -config ./build/config.yml
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -351,13 +396,29 @@ jobs:
       - build-macos-windows
     runs-on: ubuntu-22.04
     steps:
+      - name: Checkout release source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.validate-release-ref.outputs.target_sha }}
+
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
           path: downloaded-artifacts
 
-      - name: Prepare release files and file list
+      - name: Prepare release files and release body
         id: files
+        env:
+          RELEASE_TAG: ${{ needs.validate-release-ref.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.validate-release-ref.outputs.app_version }}
+          TARGET_SHA: ${{ needs.validate-release-ref.outputs.target_sha }}
+          PREVIOUS_TAG: ${{ needs.validate-release-ref.outputs.previous_tag }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          PR_TITLE: ${{ github.event.pull_request.title || '' }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login || '' }}
+          PR_URL: ${{ github.event.pull_request.html_url || '' }}
         run: |
           set -euo pipefail
           mkdir -p release-assets
@@ -365,7 +426,7 @@ jobs:
 
           notes_file="release-assets/.release-notes.md"
           if [[ ! -s "$notes_file" ]]; then
-            printf 'Release %s\n' "${{ needs.validate-release-ref.outputs.tag }}" > "$notes_file"
+            printf 'Release %s\n' "$RELEASE_TAG" > "$notes_file"
           fi
 
           {
@@ -374,9 +435,55 @@ jobs:
             find release-assets -maxdepth 1 -type f ! -name '.release-notes.md' | sort | while read -r file; do printf -- '- `%s`\n' "$(basename "$file")"; done
           } | tee build-files.md
 
-          cat "$notes_file" > release-body.md
-          echo >> release-body.md
-          cat build-files.md >> release-body.md
+          compare_url=""
+          if [[ -n "$PREVIOUS_TAG" ]]; then
+            compare_url="https://github.com/${GITHUB_REPOSITORY}/compare/${PREVIOUS_TAG}...${RELEASE_TAG}"
+          fi
+
+          {
+            echo "# Release ${RELEASE_TAG}"
+            echo
+            echo "## Overview"
+            if [[ "$EVENT_NAME" == "pull_request" ]]; then
+              echo "Automatic release created after PR #${PR_NUMBER} was merged into main."
+            else
+              echo "Manual release created from the GitHub Actions workflow."
+            fi
+            echo
+            echo "## Source"
+            echo "- Repository: ${GITHUB_REPOSITORY}"
+            echo "- Branch: main"
+            echo "- Version: ${RELEASE_VERSION}"
+            echo "- Commit: ${TARGET_SHA}"
+            if [[ -n "$PREVIOUS_TAG" ]]; then
+              echo "- Previous release: ${PREVIOUS_TAG}"
+            else
+              echo "- Previous release: none"
+            fi
+            if [[ -n "$compare_url" ]]; then
+              echo "- Compare: ${compare_url}"
+            fi
+            echo
+            if [[ "$EVENT_NAME" == "pull_request" ]]; then
+              echo "## Merged pull request"
+              echo "- PR: #${PR_NUMBER} ${PR_TITLE}"
+              echo "- Author: ${PR_AUTHOR}"
+              echo "- URL: ${PR_URL}"
+              echo
+            fi
+            echo "## Changes since previous release"
+            if [[ -n "$PREVIOUS_TAG" ]]; then
+              git log --pretty=format:'- %h %s (%an)' "${PREVIOUS_TAG}..${TARGET_SHA}" || true
+            else
+              git log --pretty=format:'- %h %s (%an)' "${TARGET_SHA}" || true
+            fi
+            echo
+            echo
+            echo "## Release notes"
+            cat "$notes_file"
+            echo
+            cat build-files.md
+          } > release-body.md
 
           echo "Release files:" >> "$GITHUB_STEP_SUMMARY"
           cat build-files.md >> "$GITHUB_STEP_SUMMARY"
@@ -385,6 +492,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.validate-release-ref.outputs.tag }}
+          target_commitish: ${{ needs.validate-release-ref.outputs.target_sha }}
           name: ${{ needs.validate-release-ref.outputs.tag }}
           body_path: release-body.md
           files: |
