@@ -77,10 +77,5 @@ func bridgeTextForLocale(locale string, key string) string {
 			return value
 		}
 	}
-	if messages, ok := bridgeMessages["zh-CN"]; ok {
-		if value := messages[key]; value != "" {
-			return value
-		}
-	}
 	return key
 }
