@@ -213,9 +213,10 @@ jobs:
           cache-dependency-path: frontend/yarn.lock
 
       - name: Install Task
-        uses: arduino/setup-task@v2
+        uses: arduino/setup-task@v3
         with:
           version: ${{ env.TASK_VERSION }}
+          repo-token: ${{ github.token }}
 
       - name: Install Wails v3 CLI
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS3_VERSION }}
@@ -309,9 +310,10 @@ jobs:
           cache-dependency-path: frontend/yarn.lock
 
       - name: Install Task
-        uses: arduino/setup-task@v2
+        uses: arduino/setup-task@v3
         with:
           version: ${{ env.TASK_VERSION }}
+          repo-token: ${{ github.token }}
 
       - name: Verify proto generation
         run: task common:generate:proto
