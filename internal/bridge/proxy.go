@@ -24,6 +24,12 @@ type ModelAdapterTestResult = client.ModelAdapterTestResult
 // ModelAdapterTestResultsPayload 定义测速结果事件载荷。
 type ModelAdapterTestResultsPayload = client.ModelAdapterTestResultsPayload
 
+// ModelListRequest 定义模型列表拉取请求。
+type ModelListRequest = client.ModelListRequest
+
+// ModelListResult 定义模型列表拉取结果。
+type ModelListResult = client.ModelListResult
+
 // LicenseActionRequest 定义了当前模块中的 LicenseActionRequest 类型。
 type LicenseActionRequest = client.LicenseActionRequest
 
@@ -99,6 +105,11 @@ func (s *ProxyService) TestModelAdapter(adapter ModelAdapterConfig) (ModelAdapte
 // GetModelAdapterTestResults 用于处理与 GetModelAdapterTestResults 相关的逻辑。
 func (s *ProxyService) GetModelAdapterTestResults() []ModelAdapterTestResult {
 	return s.core.GetModelAdapterTestResults()
+}
+
+// FetchModelIDs 用于通过后端服务拉取模型列表，避免前端 WebView CORS 限制。
+func (s *ProxyService) FetchModelIDs(req ModelListRequest) (ModelListResult, error) {
+	return s.core.FetchModelIDs(req)
 }
 
 // GetDeviceID 用于处理与 GetDeviceID 相关的逻辑。
