@@ -24,7 +24,7 @@ func NewAdService(core *ads.Service) *AdService {
 
 func (service *AdService) GetAdRuntime() (AdRuntime, error) {
 	if service == nil || service.core == nil {
-		return AdRuntime{}, fmt.Errorf(bridgeText("adServiceNotInitialized"))
+		return AdRuntime{}, fmt.Errorf("%s", bridgeText("adServiceNotInitialized"))
 	}
 	return service.core.GetRuntime(context.Background())
 }
@@ -36,10 +36,10 @@ func (service *AdService) OpenExternalURL(rawURL string) error {
 	}
 	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
 	if scheme != "http" && scheme != "https" {
-		return fmt.Errorf(bridgeText("unsupportedExternalURLScheme"))
+		return fmt.Errorf("%s", bridgeText("unsupportedExternalURLScheme"))
 	}
 	if strings.TrimSpace(parsed.Host) == "" {
-		return fmt.Errorf(bridgeText("externalURLMissingHost"))
+		return fmt.Errorf("%s", bridgeText("externalURLMissingHost"))
 	}
 	return browser.OpenURL(parsed.String())
 }
