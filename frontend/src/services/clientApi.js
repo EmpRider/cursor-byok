@@ -128,6 +128,12 @@ export function getModelEditorContext() {
   return withApiLogging("GetModelEditorContext", undefined, () => GetModelEditorContext());
 }
 
+export function fetchModelIDs(payload) {
+  return withApiLogging("FetchModelIDs", payload, () =>
+    Call.ByName(`${PROXY_SERVICE_NAME}.FetchModelIDs`, payload),
+  );
+}
+
 export function testModelAdapter(adapter) {
   return Call.ByName(`${PROXY_SERVICE_NAME}.TestModelAdapter`, adapter).then(
     (result) => {
