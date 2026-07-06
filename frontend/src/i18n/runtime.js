@@ -112,25 +112,40 @@ function warnMissingTranslation(id, locale) {
   }
 }
 
+function getMessage(messages, id) {
+  const value = messages?.[id];
+  return typeof value === "string" && value ? value : "";
+}
+
 function resolveMessage(id, fallback) {
   const activeLocale = currentLocale.value;
   const activeMessages = localeMessages[activeLocale] || {};
+  const defaultMessages = localeMessages[DEFAULT_LOCALE] || {};
   const sourceMessages = localeMessages[SOURCE_LOCALE] || {};
 
-  if (activeMessages[id]) {
-    return activeMessages[id];
+  const activeMessage = getMessage(activeMessages, id);
+  if (activeMessage) {
+    return activeMessage;
   }
 
   warnMissingTranslation(id, activeLocale);
 
-  if (fallback) {
-    return fallback;
+  if (activeLocale !== DEFAULT_LOCALE) {
+    const defaultMessage = getMessage(defaultMessages, id);
+    if (defaultMessage) {
+      return defaultMessage;
+    }
   }
 
-  // Only the source locale is allowed to fall back to source messages. This prevents
-  // English or Japanese UI from unexpectedly showing Chinese text for missing keys.
-  if (activeLocale === SOURCE_LOCALE && sourceMessages[id]) {
-    return sourceMessages[id];
+  if (activeLocale === SOURCE_LOCALE) {
+    if (fallback) {
+      return fallback;
+    }
+
+    const sourceMessage = getMessage(sourceMessages, id);
+    if (sourceMessage) {
+      return sourceMessage;
+    }
   }
 
   return id || "";
