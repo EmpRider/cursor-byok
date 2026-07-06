@@ -135,7 +135,7 @@ func Run(resources EmbeddedResources) error {
 			UniqueID: "com.cursor-assistant.single-instance",
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
 				logger.Infof("检测到实例请求，已忽略")
-			}
+			},
 		},
 	})
 
