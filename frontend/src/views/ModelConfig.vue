@@ -1,6 +1,7 @@
 <script setup>
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
+import Input from "@/components/ui/Input.vue";
 import ModelAdapterTestCard from "@/components/ModelAdapterTestCard.vue";
 import { showModal } from "@/composables/useModal";
 import {
@@ -9,13 +10,15 @@ import {
   deleteModelAdapterAt,
   duplicateModelAdapterAt,
   getModelAdapterTestResultByID,
+  normalizeModelAdapter,
   openModelEditorWindow,
   reloadUserConfig,
   runModelAdapterTest,
+  saveModelAdapterAt,
   startModelAdapterTest,
   toUserError,
 } from "@/state/appState";
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 
 const BATCH_TEST_CONCURRENCY = 10;
 
@@ -32,6 +35,16 @@ const batchCompleted = ref(0);
 const batchActiveCalls = new Set();
 let batchStopRequested = false;
 
+const importModalVisible = ref(false);
+const importFetching = ref(false);
+const importMessage = ref("");
+const importError = ref("");
+const importForm = reactive({
+  apiType: "openai",
+  baseURL: "",
+  apiKey: "",
+});
+
 const filteredAdapters = computed(() =>
   appState.modelAdapters.filter((adapter) => adapter.type === activeType.value),
 );
@@ -44,6 +57,7 @@ const batchButtonText = computed(() => {
   }
   return `停止测试 ${batchCompleted.value}/${batchTotal.value}`;
 });
+const importFetchButtonText = computed(() => (importFetching.value ? "Fetching..." : "Fetch All Models"));
 
 watch(
   () => appState.modelAdapters,
@@ -89,6 +103,145 @@ function formatHost(value) {
     return parsed.host || text;
   } catch {
     return text.replace(/^https?:\/\//, "");
+  }
+}
+
+function normalizeURLText(value) {
+  return String(value || "").trim().replace(/\/+$/, "");
+}
+
+function normalizeImportBaseURL(value) {
+  const text = normalizeURLText(value);
+  if (!text) {
+    throw new Error("Base URL is required.");
+  }
+
+  const url = new URL(text);
+  url.search = "";
+  url.hash = "";
+  url.pathname = url.pathname.replace(/\/+$/, "").replace(/\/models$/, "");
+  return normalizeURLText(url.toString());
+}
+
+function buildModelsEndpointURL(baseURL) {
+  const url = new URL(baseURL);
+  const cleanPath = url.pathname.replace(/\/+$/, "");
+  url.pathname = `${cleanPath}/models`.replace(/\/{2,}/g, "/");
+  return normalizeURLText(url.toString());
+}
+
+function extractFetchedModelIDs(payload) {
+  if (!payload || !Array.isArray(payload.data)) {
+    return [];
+  }
+
+  const seen = new Set();
+  const ids = [];
+  for (const item of payload.data) {
+    const id = String(item?.id || "").trim();
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+function buildImportDedupeKey(adapter) {
+  const normalized = normalizeModelAdapter(adapter);
+  return [normalized.type, normalizeURLText(normalized.baseURL), normalized.modelID].join("\n");
+}
+
+function createImportedModelAdapter(modelID, apiType, baseURL, apiKey) {
+  return normalizeModelAdapter({
+    ...createEmptyModelAdapter(),
+    type: apiType,
+    displayName: modelID,
+    modelID,
+    baseURL,
+    apiKey,
+  });
+}
+
+function openFetchModelsModal() {
+  importForm.apiType = activeType.value || "openai";
+  importForm.baseURL = "";
+  importForm.apiKey = "";
+  importMessage.value = "";
+  importError.value = "";
+  importModalVisible.value = true;
+}
+
+function closeFetchModelsModal() {
+  if (importFetching.value) {
+    return;
+  }
+  importModalVisible.value = false;
+}
+
+async function handleFetchModelsFromModal() {
+  if (importFetching.value) {
+    return;
+  }
+
+  importMessage.value = "";
+  importError.value = "";
+
+  const apiType = importForm.apiType === "anthropic" ? "anthropic" : "openai";
+  const apiKey = String(importForm.apiKey || "").trim();
+  if (!apiKey) {
+    importError.value = "API key is required.";
+    return;
+  }
+
+  importFetching.value = true;
+  try {
+    const baseURL = normalizeImportBaseURL(importForm.baseURL);
+    const modelsEndpointURL = buildModelsEndpointURL(baseURL);
+    const headers = {
+      Accept: "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    };
+
+    const response = await fetch(modelsEndpointURL, { headers });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch models: HTTP ${response.status}`);
+    }
+
+    const payload = await response.json();
+    const modelIDs = extractFetchedModelIDs(payload);
+    if (modelIDs.length === 0) {
+      throw new Error("No model IDs found in the models response.");
+    }
+
+    const existingKeys = new Set(appState.modelAdapters.map((adapter) => buildImportDedupeKey(adapter)));
+    let addedCount = 0;
+    let skippedCount = 0;
+
+    for (const modelID of modelIDs) {
+      const adapter = createImportedModelAdapter(modelID, apiType, baseURL, apiKey);
+      const key = buildImportDedupeKey(adapter);
+      if (existingKeys.has(key)) {
+        skippedCount += 1;
+        continue;
+      }
+
+      const result = await saveModelAdapterAt(-1, adapter);
+      if (!result.ok) {
+        throw new Error(result.error || `Failed to save model ${modelID}`);
+      }
+      existingKeys.add(key);
+      addedCount += 1;
+    }
+
+    activeType.value = apiType;
+    importForm.baseURL = baseURL;
+    importMessage.value = `Added ${addedCount} model(s).${skippedCount ? ` Skipped ${skippedCount} existing model(s).` : ""}`;
+  } catch (error) {
+    importError.value = toUserError(error);
+  } finally {
+    importFetching.value = false;
   }
 }
 
@@ -245,6 +398,9 @@ onBeforeUnmount(() => {
           >
             {{ batchButtonText }}
           </Button>
+          <Button variant="default" :disabled="appState.configSaving || batchTesting" @click="openFetchModelsModal">
+            Fetch Models
+          </Button>
           <Button variant="primary" :disabled="appState.configSaving || batchTesting" @click="openEditor()">新增模型</Button>
         </div>
       </div>
@@ -315,6 +471,78 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </Card>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="importModalVisible"
+      class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 px-4"
+      @click.self="closeFetchModelsModal"
+    >
+      <div class="w-full max-w-[520px] rounded-[12px] border border-[#343434] bg-[#1f1f1f] p-4 shadow-2xl">
+        <div class="flex items-center justify-between gap-3 border-b border-[#343434] pb-3">
+          <div>
+            <h3 class="text-base font-medium text-white">Fetch Models</h3>
+            <p class="mt-1 text-xs text-[#8f8f8f]">Fetch from Base URL + /models and add every returned model ID.</p>
+          </div>
+          <button
+            type="button"
+            class="rounded-[6px] px-2 py-1 text-sm text-[#a3a3a3] hover:bg-[#2a2a2a] hover:text-white"
+            :disabled="importFetching"
+            @click="closeFetchModelsModal"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div class="mt-4 flex flex-col gap-3">
+          <label class="flex flex-col gap-1">
+            <span class="text-sm text-[#d4d4d4]">API Type</span>
+            <select
+              v-model="importForm.apiType"
+              class="h-9 rounded-[6px] border border-[#3f3f3f] bg-[#232323] px-3 text-sm text-[#e5e5e5] outline-none focus:border-[#10AD5D]"
+            >
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+            </select>
+          </label>
+
+          <label class="flex flex-col gap-1">
+            <span class="text-sm text-[#d4d4d4]">Base URL</span>
+            <input
+              v-model="importForm.baseURL"
+              type="text"
+              placeholder="http://localhost:20128/v1"
+              class="h-9 rounded-[6px] border border-[#3f3f3f] bg-[#232323] px-3 text-sm text-[#e5e5e5] outline-none focus:border-[#10AD5D]"
+            />
+            <span class="text-xs text-[#8f8f8f]">Do not include /models. The fetch URL will be Base URL + /models.</span>
+          </label>
+
+          <label class="flex flex-col gap-1">
+            <span class="text-sm text-[#d4d4d4]">API Key</span>
+            <Input
+              v-model="importForm.apiKey"
+              type="password"
+              allow-visibility-toggle
+              placeholder="sk-xxxxxx"
+              autocomplete="off"
+            />
+          </label>
+
+          <div v-if="importMessage" class="rounded-[8px] border border-[#14532d] bg-[#102418] px-3 py-2 text-sm text-[#86efac]">
+            {{ importMessage }}
+          </div>
+          <div v-if="importError" class="rounded-[8px] border border-[#4b1d1d] bg-[#2a1313] px-3 py-2 text-sm text-[#fca5a5]">
+            {{ importError }}
+          </div>
+        </div>
+
+        <div class="mt-4 flex items-center justify-end gap-2 border-t border-[#343434] pt-3">
+          <Button variant="default" :disabled="importFetching" @click="closeFetchModelsModal">Cancel</Button>
+          <Button variant="primary" :disabled="importFetching || appState.configSaving" @click="handleFetchModelsFromModal">
+            {{ importFetchButtonText }}
+          </Button>
         </div>
       </div>
     </div>
