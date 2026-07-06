@@ -72,7 +72,7 @@ func (s *WindowService) InstallReadyUpdate() error {
 	manager := s.updater
 	s.mu.RUnlock()
 	if manager == nil {
-		return fmt.Errorf(bridgeText("updateManagerNotInitialized"))
+		return fmt.Errorf("%s", bridgeText("updateManagerNotInitialized"))
 	}
 	return manager.InstallReadyUpdate()
 }
