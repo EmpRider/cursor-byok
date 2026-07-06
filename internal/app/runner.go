@@ -2,10 +2,6 @@ package app
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/x509"
-	"encoding/hex"
-	"encoding/pem"
 	"io/fs"
 	"net"
 	goruntime "runtime"
@@ -33,23 +29,16 @@ import (
 )
 
 const (
-	// appName 表示当前模块中的 appName 状态值。
 	appName = "Cursor助手"
-	// adRefreshInterval 表示后台广告拉取间隔。
 	adRefreshInterval = 3 * time.Minute
 )
 
-// EmbeddedResources 定义了当前模块中的 EmbeddedResources 类型。
 type EmbeddedResources struct {
-	// Assets 表示当前声明中的 Assets。
 	Assets fs.FS
-	// AppIcon 表示当前声明中的 AppIcon。
 	AppIcon []byte
-	// TrayIcon 表示当前声明中的 TrayIcon。
 	TrayIcon []byte
 }
 
-// init 用于处理与 init 相关的逻辑。
 func init() {
 	application.RegisterEvent[bridge.ProxyState]("proxy:state")
 	application.RegisterEvent[bridge.UserConfig]("user-config:changed")
@@ -61,14 +50,11 @@ func init() {
 	application.RegisterEvent[updater.ErrorPayload](updater.EventError)
 }
 
-// Run 用于处理与 Run 相关的逻辑。
 func Run(resources EmbeddedResources) error {
 	logger.Init()
 	netproxy.InstallDefaultTransport()
 
 	embeddedCACertPEM := certs.EmbeddedCACertPEM()
-	logEmbeddedCAInfo(embeddedCACertPEM)
-
 	certManager, err := certs.NewEmbeddedManager()
 	if err != nil {
 		return err
@@ -149,8 +135,7 @@ func Run(resources EmbeddedResources) error {
 			UniqueID: "com.cursor-assistant.single-instance",
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
 				logger.Infof("检测到实例请求，已忽略")
-				// 不激活窗口，避免干扰用户工作
-			},
+			}
 		},
 	})
 
@@ -201,7 +186,6 @@ func Run(resources EmbeddedResources) error {
 	}
 
 	updateManager = updater.NewManager(app)
-
 	windowService.SetApp(app)
 	windowService.SetUpdater(updateManager)
 
@@ -237,9 +221,7 @@ func Run(resources EmbeddedResources) error {
 				AllowsBackForwardNavigationGestures: u.False,
 			},
 		},
-		Windows: application.WindowsWindow{
-			HiddenOnTaskbar: false,
-		},
+		Windows: application.WindowsWindow{HiddenOnTaskbar: false},
 	})
 
 	window := mainWindow
@@ -247,13 +229,9 @@ func Run(resources EmbeddedResources) error {
 		window.Hide()
 		e.Cancel()
 	})
-	window.RegisterHook(events.Common.WindowFocus, func(e *application.WindowEvent) {
-		refreshAdAsync()
-	})
+	window.RegisterHook(events.Common.WindowFocus, func(e *application.WindowEvent) { refreshAdAsync() })
 
-	showMainWindow := func() {
-		window.Show().Focus()
-	}
+	showMainWindow := func() { window.Show().Focus() }
 	toggleMainWindow := func() {
 		if window.IsVisible() {
 			window.Hide()
@@ -262,46 +240,50 @@ func Run(resources EmbeddedResources) error {
 		showMainWindow()
 	}
 
+	labels := currentTrayMenuText(proxyService)
 	systray := app.SystemTray.New()
 	menu := app.Menu.New()
-	statusItem := menu.Add("状态：未启动").SetEnabled(false)
+	statusItem := menu.Add(labels.statusStopped).SetEnabled(false)
 	menu.AddSeparator()
-	startItem := menu.Add("启动服务")
-	stopItem := menu.Add("停止服务")
-	menu.Add("检查更新").OnClick(func(ctx *application.Context) {
-		updateManager.CheckNow(true)
-	})
+	startItem := menu.Add(labels.startService)
+	stopItem := menu.Add(labels.stopService)
+	checkUpdateItem := menu.Add(labels.checkUpdates)
+	checkUpdateItem.OnClick(func(ctx *application.Context) { updateManager.CheckNow(true) })
 	menu.AddSeparator()
-	menu.Add("显示窗口").OnClick(func(ctx *application.Context) {
-		showMainWindow()
-	})
-	menu.Add("隐藏窗口").OnClick(func(ctx *application.Context) {
-		window.Hide()
-	})
+	showWindowItem := menu.Add(labels.showWindow)
+	showWindowItem.OnClick(func(ctx *application.Context) { showMainWindow() })
+	hideWindowItem := menu.Add(labels.hideWindow)
+	hideWindowItem.OnClick(func(ctx *application.Context) { window.Hide() })
 	menu.AddSeparator()
-	menu.Add("退出").OnClick(func(ctx *application.Context) {
+	quitItem := menu.Add(labels.quit)
+	quitItem.OnClick(func(ctx *application.Context) {
 		proxyService.ShutdownForQuit()
 		app.Quit()
 	})
 
 	refreshTray := func() {
+		labels := currentTrayMenuText(proxyService)
+		startItem.SetLabel(labels.startService)
+		stopItem.SetLabel(labels.stopService)
+		checkUpdateItem.SetLabel(labels.checkUpdates)
+		showWindowItem.SetLabel(labels.showWindow)
+		hideWindowItem.SetLabel(labels.hideWindow)
+		quitItem.SetLabel(labels.quit)
 		state := proxyService.GetState()
 		if state.Running {
-			statusItem.SetLabel("状态：运行中")
+			statusItem.SetLabel(labels.statusRunning)
 			startItem.SetEnabled(false)
 			stopItem.SetEnabled(true)
 		} else {
-			statusItem.SetLabel("状态：未启动")
+			statusItem.SetLabel(labels.statusStopped)
 			startItem.SetEnabled(true)
 			stopItem.SetEnabled(false)
 		}
-		if refreshAdAssetBaseURL() {
-			refreshAdRuntime()
-		}
+		systray.SetTooltip(labels.tooltip)
+		if refreshAdAssetBaseURL() { refreshAdRuntime() }
 	}
-	app.Event.On("proxy:state", func(event *application.CustomEvent) {
-		refreshTray()
-	})
+	app.Event.On("proxy:state", func(event *application.CustomEvent) { refreshTray() })
+	app.Event.On("user-config:changed", func(event *application.CustomEvent) { refreshTray() })
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(event *application.ApplicationEvent) {
 		logger.Infof("应用版本：v%s", buildinfo.CurrentVersion())
 		updateManager.Start()
@@ -312,9 +294,7 @@ func Run(resources EmbeddedResources) error {
 				logger.Errorf("自动启动服务失败: %v", err)
 			} else {
 				state := proxyService.GetState()
-				if refreshAdAssetBaseURL() {
-					refreshAdRuntime()
-				}
+				if refreshAdAssetBaseURL() { refreshAdRuntime() }
 				logger.Infof("代理已自动启动: %s", state.ProxyListenAddr)
 			}
 		}()
@@ -329,9 +309,7 @@ func Run(resources EmbeddedResources) error {
 		refreshTray()
 	})
 	stopItem.OnClick(func(ctx *application.Context) {
-		if _, err := proxyService.StopProxy(); err != nil {
-			logger.Errorf("停止服务失败: %v", err)
-		}
+		if _, err := proxyService.StopProxy(); err != nil { logger.Errorf("停止服务失败: %v", err) }
 		refreshTray()
 	})
 
@@ -345,7 +323,7 @@ func Run(resources EmbeddedResources) error {
 			systray.SetIcon(resources.TrayIcon)
 		}
 	}
-	systray.SetTooltip(appName)
+	systray.SetTooltip(labels.tooltip)
 	systray.OnClick(toggleMainWindow).SetMenu(menu)
 	refreshTray()
 
@@ -362,33 +340,4 @@ func browserReachableLoopbackBaseURL(listenAddr string) string {
 		host = "127.0.0.1"
 	}
 	return "http://" + net.JoinHostPort(host, port)
-}
-
-// logEmbeddedCAInfo 用于处理与 logEmbeddedCAInfo 相关的逻辑。
-func logEmbeddedCAInfo(certPEM []byte) {
-	if len(certPEM) == 0 {
-		logger.Errorf("embedded CA is empty")
-		return
-	}
-	cert, err := parseEmbeddedCert(certPEM)
-	if err != nil {
-		logger.Errorf("parse embedded CA failed: %v", err)
-		return
-	}
-	sum := sha256.Sum256(cert.Raw)
-	logger.Infof(
-		"embedded CA loaded: sha256=%s subject=%s valid=%s~%s",
-		strings.ToUpper(hex.EncodeToString(sum[:])),
-		cert.Subject.String(),
-		cert.NotBefore.Format(time.RFC3339),
-		cert.NotAfter.Format(time.RFC3339),
-	)
-}
-
-// parseEmbeddedCert 用于处理与 parseEmbeddedCert 相关的逻辑。
-func parseEmbeddedCert(data []byte) (*x509.Certificate, error) {
-	if block, _ := pem.Decode(data); block != nil {
-		return x509.ParseCertificate(block.Bytes)
-	}
-	return x509.ParseCertificate(data)
 }
