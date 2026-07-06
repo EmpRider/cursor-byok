@@ -45,6 +45,7 @@ const importForm = reactive({
   baseURL: "",
   apiKey: "",
 });
+const selectedModelKeys = ref(new Set());
 
 const filteredAdapters = computed(() =>
   appState.modelAdapters.filter((adapter) => adapter.type === activeType.value),
@@ -59,6 +60,14 @@ const batchButtonText = computed(() => {
   return `停止测试 ${batchCompleted.value}/${batchTotal.value}`;
 });
 const importFetchButtonText = computed(() => (importFetching.value ? "Fetching..." : "Fetch All Models"));
+const selectedFilteredAdapters = computed(() =>
+  filteredAdapters.value.filter((adapter) => selectedModelKeys.value.has(getAdapterSelectionKey(adapter))),
+);
+const selectedFilteredCount = computed(() => selectedFilteredAdapters.value.length);
+const allFilteredSelected = computed(() =>
+  filteredAdapters.value.length > 0 && selectedFilteredCount.value === filteredAdapters.value.length,
+);
+const selectAllButtonText = computed(() => (allFilteredSelected.value ? "Clear Selection" : "Select All"));
 
 watch(
   () => appState.modelAdapters,
@@ -70,6 +79,17 @@ watch(
     activeType.value = fallback?.value ?? "openai";
   },
   { deep: true, immediate: true },
+);
+
+watch(
+  () => appState.modelAdapters,
+  (adapters) => {
+    const validKeys = new Set(adapters.map((adapter) => getAdapterSelectionKey(adapter)));
+    selectedModelKeys.value = new Set(
+      Array.from(selectedModelKeys.value).filter((key) => validKeys.has(key)),
+    );
+  },
+  { deep: true },
 );
 
 async function showActionError(title, error) {
@@ -109,6 +129,46 @@ function formatHost(value) {
 
 function normalizeURLText(value) {
   return String(value || "").trim().replace(/\/+$/, "");
+}
+
+function getAdapterSelectionKey(adapter) {
+  if (adapter?.id) {
+    return `id:${adapter.id}`;
+  }
+  return [
+    "adapter",
+    adapter?.type || "",
+    normalizeURLText(adapter?.baseURL),
+    adapter?.modelID || "",
+    adapter?.displayName || "",
+    adapter?.apiKey || "",
+  ].join("\n");
+}
+
+function isAdapterSelected(adapter) {
+  return selectedModelKeys.value.has(getAdapterSelectionKey(adapter));
+}
+
+function toggleAdapterSelection(adapter) {
+  const key = getAdapterSelectionKey(adapter);
+  const next = new Set(selectedModelKeys.value);
+  if (next.has(key)) {
+    next.delete(key);
+  } else {
+    next.add(key);
+  }
+  selectedModelKeys.value = next;
+}
+
+function handleSelectAllFilteredAdapters() {
+  const next = new Set(selectedModelKeys.value);
+  const keys = filteredAdapters.value.map((adapter) => getAdapterSelectionKey(adapter));
+  if (allFilteredSelected.value) {
+    keys.forEach((key) => next.delete(key));
+  } else {
+    keys.forEach((key) => next.add(key));
+  }
+  selectedModelKeys.value = next;
 }
 
 function buildImportDedupeKey(adapter) {
@@ -224,6 +284,51 @@ async function handleDeleteModelAdapter(index) {
   const result = await deleteModelAdapterAt(index);
   if (!result.ok) {
     await showActionError("删除失败", result.error);
+  } else {
+    const next = new Set(selectedModelKeys.value);
+    next.delete(getAdapterSelectionKey(target));
+    selectedModelKeys.value = next;
+  }
+}
+
+async function handleDeleteSelectedModelAdapters() {
+  const targets = selectedFilteredAdapters.value
+    .map((adapter) => ({
+      adapter,
+      index: appState.modelAdapters.indexOf(adapter),
+      key: getAdapterSelectionKey(adapter),
+    }))
+    .filter((target) => target.index >= 0)
+    .sort((left, right) => right.index - left.index);
+
+  if (targets.length === 0) {
+    return;
+  }
+
+  const confirmed = await showModal({
+    title: "Delete selected models?",
+    content: `This will delete ${targets.length} selected ${typeLabel(activeType.value)} model(s). This action cannot be undone.`,
+    confirmText: "Delete",
+    cancelText: "Cancel",
+  });
+  if (!confirmed) {
+    return;
+  }
+
+  const removedKeys = new Set();
+  for (const target of targets) {
+    const result = await deleteModelAdapterAt(target.index);
+    if (!result.ok) {
+      await showActionError("删除失败", result.error);
+      break;
+    }
+    removedKeys.add(target.key);
+  }
+
+  if (removedKeys.size > 0) {
+    selectedModelKeys.value = new Set(
+      Array.from(selectedModelKeys.value).filter((key) => !removedKeys.has(key)),
+    );
   }
 }
 
@@ -346,13 +451,27 @@ onBeforeUnmount(() => {
             <span>{{ tab.label }}</span>
           </button>
         </div>
-        <div class="center-row gap-2">
+        <div class="center-row flex-wrap justify-end gap-2">
           <Button
             variant="default"
             :disabled="appState.configSaving || (!batchTesting && filteredAdapters.length === 0)"
             @click="handleTestAllModelAdapters"
           >
             {{ batchButtonText }}
+          </Button>
+          <Button
+            variant="default"
+            :disabled="appState.configSaving || batchTesting || filteredAdapters.length === 0"
+            @click="handleSelectAllFilteredAdapters"
+          >
+            {{ selectAllButtonText }}
+          </Button>
+          <Button
+            variant="default"
+            :disabled="appState.configSaving || batchTesting || selectedFilteredCount === 0"
+            @click="handleDeleteSelectedModelAdapters"
+          >
+            Delete Selected{{ selectedFilteredCount ? ` (${selectedFilteredCount})` : "" }}
           </Button>
           <Button variant="default" :disabled="appState.configSaving || batchTesting" @click="openFetchModelsModal">
             Fetch Models
@@ -377,6 +496,15 @@ onBeforeUnmount(() => {
             <div class="flex h-full min-h-[154px] flex-col justify-between gap-3">
               <div class="flex flex-col gap-2.5">
                 <div class="flex items-start justify-between gap-3">
+                  <label class="center-row mt-0.5 shrink-0 cursor-pointer gap-2 text-xs text-[#a3a3a3]">
+                    <input
+                      type="checkbox"
+                      class="size-4 accent-[#10AD5D]"
+                      :checked="isAdapterSelected(adapter)"
+                      @change="toggleAdapterSelection(adapter)"
+                      @click.stop
+                    />
+                  </label>
                   <div class="min-w-0 flex-1">
                     <div class="truncate text-base font-medium text-white">{{ adapter.displayName }}</div>
                     <div class="mt-1 truncate text-sm text-[#8f8f8f]">{{ adapter.modelID }}</div>
