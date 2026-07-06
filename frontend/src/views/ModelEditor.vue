@@ -125,7 +125,7 @@ function ensureAnthropicThinkingEffort() {
 const fieldTips = {
   displayName: "仅用于界面展示，便于你区分不同模型。",
   modelID: "请求实际发送给服务端的模型名称，例如 gpt-4.1 或 claude-sonnet。",
-  baseURL: "模型服务的 API 根地址，通常为兼容 OpenAI 或 Anthropic 的接口入口。可以填 /v1 根地址，也可以填 /v1/models 后点击 Fetch Models 批量导入。",
+  baseURL: "模型服务的 API 根地址，通常为兼容 OpenAI 或 Anthropic 的接口入口。",
   apiKey: "调用该模型服务需要使用的访问密钥。",
   contextWindowTokens: "模型单次可接受的最大上下文 Token 数。留空时使用默认值。",
   reasoningEffort: "推理强度仅对部分支持 reasoning_effort 的模型生效，并不是所有模型都支持。越高通常越稳，但也可能更慢。",
