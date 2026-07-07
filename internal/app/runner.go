@@ -262,44 +262,60 @@ func Run(resources EmbeddedResources) error {
 		showMainWindow()
 	}
 
+	labels := currentTrayMenuText(proxyService)
 	systray := app.SystemTray.New()
 	menu := app.Menu.New()
-	statusItem := menu.Add("状态：未启动").SetEnabled(false)
+	statusItem := menu.Add(labels.statusStopped).SetEnabled(false)
 	menu.AddSeparator()
-	startItem := menu.Add("启动服务")
-	stopItem := menu.Add("停止服务")
-	menu.Add("检查更新").OnClick(func(ctx *application.Context) {
+	startItem := menu.Add(labels.startService)
+	stopItem := menu.Add(labels.stopService)
+	checkUpdateItem := menu.Add(labels.checkUpdates)
+	checkUpdateItem.OnClick(func(ctx *application.Context) {
 		updateManager.CheckNow(true)
 	})
 	menu.AddSeparator()
-	menu.Add("显示窗口").OnClick(func(ctx *application.Context) {
+	showWindowItem := menu.Add(labels.showWindow)
+	showWindowItem.OnClick(func(ctx *application.Context) {
 		showMainWindow()
 	})
-	menu.Add("隐藏窗口").OnClick(func(ctx *application.Context) {
+	hideWindowItem := menu.Add(labels.hideWindow)
+	hideWindowItem.OnClick(func(ctx *application.Context) {
 		window.Hide()
 	})
 	menu.AddSeparator()
-	menu.Add("退出").OnClick(func(ctx *application.Context) {
+	quitItem := menu.Add(labels.quit)
+	quitItem.OnClick(func(ctx *application.Context) {
 		proxyService.ShutdownForQuit()
 		app.Quit()
 	})
 
 	refreshTray := func() {
+		labels := currentTrayMenuText(proxyService)
+		startItem.SetLabel(labels.startService)
+		stopItem.SetLabel(labels.stopService)
+		checkUpdateItem.SetLabel(labels.checkUpdates)
+		showWindowItem.SetLabel(labels.showWindow)
+		hideWindowItem.SetLabel(labels.hideWindow)
+		quitItem.SetLabel(labels.quit)
 		state := proxyService.GetState()
 		if state.Running {
-			statusItem.SetLabel("状态：运行中")
+			statusItem.SetLabel(labels.statusRunning)
 			startItem.SetEnabled(false)
 			stopItem.SetEnabled(true)
 		} else {
-			statusItem.SetLabel("状态：未启动")
+			statusItem.SetLabel(labels.statusStopped)
 			startItem.SetEnabled(true)
 			stopItem.SetEnabled(false)
 		}
+		systray.SetTooltip(labels.tooltip)
 		if refreshAdAssetBaseURL() {
 			refreshAdRuntime()
 		}
 	}
 	app.Event.On("proxy:state", func(event *application.CustomEvent) {
+		refreshTray()
+	})
+	app.Event.On("user-config:changed", func(event *application.CustomEvent) {
 		refreshTray()
 	})
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(event *application.ApplicationEvent) {
@@ -345,7 +361,7 @@ func Run(resources EmbeddedResources) error {
 			systray.SetIcon(resources.TrayIcon)
 		}
 	}
-	systray.SetTooltip(appName)
+	systray.SetTooltip(labels.tooltip)
 	systray.OnClick(toggleMainWindow).SetMenu(menu)
 	refreshTray()
 
