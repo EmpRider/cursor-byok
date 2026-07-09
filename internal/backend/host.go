@@ -741,7 +741,7 @@ func uploadServiceProcedure(pattern string, name string, protocol server.RouteOp
 
 func tabServerUpstreamProcedure(pattern string, name string, protocol server.RouteOption, deps upstream.Dependencies) server.Option {
 	direct := upstream.DirectAction(deps, upstream.CompatRouteConfig{Name: name})
-	action := func(ctx *server.Context) error {
+	localAction := func(ctx *server.Context) error {
 		if ctx != nil && ctx.Request != nil && ctx.Request.URL != nil {
 			baseURL, err := url.Parse(tabServerBaseURL)
 			if err != nil {
@@ -757,8 +757,8 @@ func tabServerUpstreamProcedure(pattern string, name string, protocol server.Rou
 	return server.POST(pattern,
 		server.Name(name),
 		protocol,
-		server.Local(action),
-		server.Upstream(action),
+		server.Local(localAction),
+		server.Upstream(direct),
 	)
 }
 
